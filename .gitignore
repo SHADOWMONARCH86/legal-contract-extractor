@@ -1,0 +1,56 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.Python
+env/
+venv/
+.venv/
+ENV/
+
+# ── Environment & Secrets ─────────────────────────────────────────────────────
+.env
+*.key
+*.pem
+secrets/
+
+# ── Data & Models ─────────────────────────────────────────────────────────────
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+models/
+!models/.gitkeep
+
+# ── MLflow ────────────────────────────────────────────────────────────────────
+mlruns/
+mlflow.db
+mlflow/
+
+# ── Testing & Coverage ────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+reports/
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+*.log
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Poetry ────────────────────────────────────────────────────────────────────
+# Note: poetry.lock SHOULD be committed — never add it here
+# It guarantees every developer and Docker build gets identical installs

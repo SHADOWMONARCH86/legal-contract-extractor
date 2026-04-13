@@ -1,0 +1,43 @@
+# ── Web Framework ─────────────────────────────────────────────────────────────
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+python-multipart==0.0.9        # Required for FastAPI file uploads
+
+# ── Configuration ─────────────────────────────────────────────────────────────
+pydantic==2.7.1
+pydantic-settings==2.2.1
+PyYAML==6.0.1
+
+# ── PDF Processing ────────────────────────────────────────────────────────────
+pdfplumber==0.11.0             # Digital PDF text extraction
+pdf2image==1.17.0              # PDF → PIL image (for OCR; requires poppler)
+
+# ── OCR ───────────────────────────────────────────────────────────────────────
+pytesseract==0.3.10            # Tesseract Python binding (requires Tesseract binary)
+Pillow==10.3.0                 # Image manipulation
+
+# ── NLP / NER ─────────────────────────────────────────────────────────────────
+# SpaCy (lightweight fallback model)
+spacy==3.7.4
+
+# HuggingFace ecosystem (for fine-tuned BERT NER)
+transformers==4.41.0
+tokenizers==0.19.1
+torch==2.3.0                   # CPU build; for GPU: torch==2.3.0+cu121
+datasets==2.19.1               # For training data loading
+evaluate==0.4.2                # For NER metrics (seqeval)
+seqeval==1.2.2                 # Token-level NER evaluation
+
+# ── Image Preprocessing (Optional — improves OCR accuracy) ────────────────────
+opencv-python-headless==4.9.0.80
+
+# ── MLflow Experiment Tracking (Optional) ─────────────────────────────────────
+mlflow==2.12.1
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+python-json-logger==2.0.7      # Structured JSON logging
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest==8.2.0
+pytest-asyncio==0.23.6
+httpx==0.27.0                  # Required by FastAPI TestClient

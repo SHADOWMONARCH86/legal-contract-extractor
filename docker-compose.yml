@@ -1,0 +1,61 @@
+version: "3.9"
+
+services:
+  # ── Main API Service ────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: legal-contract-extractor:latest
+    container_name: legal-extractor-api
+    ports:
+      - "${PORT:-8000}:8000"
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app
+      - APP_ENV=production
+      - LOG_FORMAT=json
+      - WORKERS=2
+    volumes:
+      # Mount a local models directory to inject a fine-tuned model without rebuilding
+      - ./models:/app/models:ro
+      # Persist processed documents
+      - ./data/processed:/app/data/processed
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - extractor-net
+    depends_on:
+      - mlflow
+
+  # ── MLflow Tracking Server (Optional) ──────────────────────────────────────
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.12.1
+    container_name: legal-extractor-mlflow
+    ports:
+      - "5000:5000"
+    command: >
+      mlflow server
+        --host 0.0.0.0
+        --port 5000
+        --backend-store-uri sqlite:///mlflow/mlflow.db
+        --default-artifact-root /mlflow/artifacts
+    volumes:
+      - mlflow-data:/mlflow
+    networks:
+      - extractor-net
+    restart: unless-stopped
+
+networks:
+  extractor-net:
+    driver: bridge
+
+volumes:
+  mlflow-data:

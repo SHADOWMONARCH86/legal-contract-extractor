@@ -1,0 +1,43 @@
+# config/config.yaml
+# Non-secret configuration. Secrets go in .env
+
+app:
+  name: "Legal Contract Entity Extractor"
+  version: "1.0.0"
+  environment: "development"   # development | staging | production
+
+api:
+  host: "0.0.0.0"
+  port: 8000
+  workers: 1
+  max_upload_size_mb: 50
+
+logging:
+  level: "INFO"         # DEBUG | INFO | WARNING | ERROR
+  format: "text"        # text | json (json for production log aggregators)
+
+ner:
+  backend: "auto"       # auto | huggingface | spacy | rule_based
+  # HuggingFace model (set MODEL_PATH in .env or Docker env)
+  # model_path: "path/to/your/fine-tuned-model"
+  spacy_model: "en_core_web_lg"
+  min_confidence: 0.40
+  chunk_size: 512       # Token chunk size for transformer inference
+
+ocr:
+  language: "eng"
+  dpi: 300
+  # Preprocessing steps applied before Tesseract
+  preprocessing:
+    deskew: true
+    denoise: true
+    binarize: true
+
+postprocessing:
+  date_format_output: "%Y-%m-%d"   # ISO-8601
+  context_window_chars: 80
+  dedup_entities: true
+
+mlflow:
+  experiment_name: "legal-ner"
+  # tracking_uri is set via MLFLOW_TRACKING_URI env var
