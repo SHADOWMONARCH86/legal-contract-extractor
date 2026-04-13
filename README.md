@@ -1,10 +1,13 @@
-# ⚖️ Legal Contract Entity Extractor
+# ⚖️ Intelligent Document Processing System
+## Legal Contract Entity Extractor
 
-> **Production-grade NLP system** for automated extraction of structured entities from legal PDF contracts — handles both digital and scanned documents.
+> A production-grade AI pipeline that automatically extracts structured entities from legal PDF contracts — handling both digital and scanned documents using OCR, BERT-based NER, and rule-based validation.
 
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688.svg)](https://fastapi.tiangolo.com)
+[![BERT](https://img.shields.io/badge/Model-legal--bert-orange.svg)](https://huggingface.co/nlpaueb/legal-bert-base-uncased)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED.svg)](https://www.docker.com/)
+[![MLflow](https://img.shields.io/badge/MLflow-tracked-0194E2.svg)](https://mlflow.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
@@ -13,80 +16,104 @@
 
 - [Overview](#-overview)
 - [Architecture](#-architecture)
-- [Folder Structure](#-folder-structure)
 - [Tech Stack](#-tech-stack)
+- [Folder Structure](#-folder-structure)
 - [Pipeline Design](#-pipeline-design)
 - [Extracted Entities](#-extracted-entities)
 - [Setup — Local](#-setup--local-development)
 - [Setup — Docker](#-setup--docker)
 - [API Reference](#-api-reference)
-- [Training a Custom Model](#-training-a-custom-ner-model)
 - [Sample Output](#-sample-json-output)
+- [Model Training](#-model-training)
 - [Running Tests](#-running-tests)
-- [MLflow Experiment Tracking](#-mlflow-experiment-tracking)
+- [MLflow Tracking](#-mlflow-experiment-tracking)
 - [Roadmap](#-roadmap)
 
 ---
 
 ## 🎯 Overview
 
-Legal teams review hundreds of contracts per week. This system automates the extraction of critical entities from legal PDFs — whether they are digitally generated or scanned — using a layered NLP pipeline:
+Organizations such as law firms and financial institutions process thousands of legal contracts annually. Manual review is slow, error-prone, and expensive. This system eliminates that bottleneck by building an end-to-end automated pipeline that:
 
-| Entity Type | Examples |
+- Accepts **any PDF** — digitally generated or scanned
+- Automatically applies **OCR** when text cannot be extracted directly
+- Runs **BERT-based Named Entity Recognition** fine-tuned on 509 real CUAD legal contracts
+- Returns **structured JSON** ready for downstream contract management systems
+
+| Entity | Examples |
 |---|---|
-| **Dates** | Effective date, expiry date, signing date |
-| **Party Names** | Vendor, Client, Employer, Employee |
-| **Monetary Values** | Fees, penalties, payment amounts |
-| **Termination Clauses** | Notice periods, for-cause/convenience provisions |
-
-All output is returned as clean, structured **JSON** via a REST API.
+| **Dates** | Effective date, expiry date, signing date — normalized to ISO-8601 |
+| **Party Names** | Organizations and individuals — with role inference |
+| **Monetary Values** | Fees, penalties, payments — with parsed amount and currency |
+| **Termination Clauses** | Full clause text, type classification, notice period |
 
 ---
 
 ## 🏗️ Architecture
 
 ```
-                    ┌─────────────────────────────────────────┐
-                    │           CLIENT (curl / UI / SDK)       │
-                    └──────────────────┬──────────────────────┘
-                                       │  POST /api/v1/extract
-                                       ▼
-                    ┌─────────────────────────────────────────┐
-                    │          FastAPI Application             │
-                    │   ┌──────────────────────────────────┐  │
-                    │   │      ExtractionService           │  │
-                    │   │  (Pipeline Orchestrator)         │  │
-                    │   └──────────┬───────────────────────┘  │
-                    └─────────────┼───────────────────────────┘
-                                  │
-          ┌───────────────────────┼───────────────────────────┐
-          │                       │                           │
-          ▼                       ▼                           ▼
-  ┌───────────────┐     ┌─────────────────┐       ┌──────────────────┐
-  │  PDFUtils     │     │   TextCleaner   │       │   NERService     │
-  │               │     │                 │       │  (Singleton)     │
-  │ pdfplumber    │     │ • Ligatures     │       │                  │
-  │ (digital PDF) │     │ • OCR artefacts │       │ HuggingFace BERT │
-  │               │     │ • Whitespace    │       │   ↓ (fallback)   │
-  │     ↓ (if     │     │ • Unicode norm  │       │ spaCy NER        │
-  │   scanned)    │     └─────────────────┘       │   ↓ (fallback)   │
-  │               │                               │ Rule-based regex │
-  │ OCRPipeline   │                               └────────┬─────────┘
-  │ pdf2image +   │                                        │
-  │ Tesseract OCR │                               ┌────────▼─────────┐
-  └───────────────┘                               │  PostProcessor   │
-                                                  │                  │
-                                                  │ • Date ISO norm  │
-                                                  │ • Currency parse │
-                                                  │ • Clause classify│
-                                                  │ • Deduplication  │
-                                                  └────────┬─────────┘
-                                                           │
-                                                  ┌────────▼─────────┐
-                                                  │  JSON Response   │
-                                                  │  (Pydantic)      │
-                                                  └──────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                    CLIENT (Browser / curl / SDK)                  │
+└─────────────────────────────┬────────────────────────────────────┘
+                              │  POST /api/v1/extract
+                              ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                      FastAPI Application                          │
+│  ┌─────────────────────────────────────────────────────────────┐ │
+│  │                   ExtractionService                          │ │
+│  │              (Pipeline Orchestrator)                         │ │
+│  └──────┬──────────────┬──────────────┬────────────────────────┘ │
+└─────────┼──────────────┼──────────────┼──────────────────────────┘
+          │              │              │
+          ▼              ▼              ▼
+   ┌──────────┐   ┌───────────┐   ┌──────────────────────────────┐
+   │ PDFUtils │   │TextCleaner│   │         NERService            │
+   │          │   │           │   │      (Singleton)              │
+   │pdfplumber│   │• Ligatures│   │                               │
+   │(digital) │   │• OCR noise│   │  1. legal-bert-base-uncased  │
+   │          │   │• Hyphens  │   │     (fine-tuned on CUAD)     │
+   │    ↓     │   │• Unicode  │   │         ↓ fallback           │
+   │(scanned) │   └───────────┘   │  2. spaCy en_core_web_lg     │
+   │          │                   │         ↓ fallback           │
+   │OCRPipeline│                  │  3. Rule-based regex         │
+   │pdf2image +│                  │  + Rule supplement always    │
+   │Tesseract  │                  └──────────────┬───────────────┘
+   └──────────┘                                  │
+                                                 ▼
+                                    ┌────────────────────────┐
+                                    │      PostProcessor      │
+                                    │                         │
+                                    │ Dates  → ISO-8601       │
+                                    │ Money  → amount+currency│
+                                    │ Parties→ name+role      │
+                                    │ Terms  → type+notice    │
+                                    └────────────┬────────────┘
+                                                 │
+                                                 ▼
+                                    ┌────────────────────────┐
+                                    │    Structured JSON      │
+                                    └────────────────────────┘
 ```
+
+---
+
+## 🛠️ Tech Stack
+
+| Component | Technology |
+|---|---|
+| API Framework | FastAPI 0.111 + Uvicorn |
+| NER Model | `nlpaueb/legal-bert-base-uncased` fine-tuned on CUAD |
+| NER Fallback 1 | spaCy `en_core_web_lg` |
+| NER Fallback 2 | Rule-based regex engine |
+| PDF Extraction | pdfplumber |
+| OCR | Tesseract + pdf2image + OpenCV |
+| Training Data | CUAD (509 contracts) + 100 synthetic contracts |
+| Experiment Tracking | MLflow |
+| Containerisation | Docker + Docker Compose |
+| Validation | Pydantic v2 |
+| Package Manager | Poetry |
+| Testing | pytest + httpx |
+| Logging | python-json-logger (structured JSON logs) |
 
 ---
 
@@ -96,73 +123,54 @@ All output is returned as clean, structured **JSON** via a REST API.
 legal-contract-extractor/
 │
 ├── app/                          # FastAPI application
-│   ├── main.py                   # App entrypoint, middleware, lifespan
+│   ├── main.py                   # Entrypoint, middleware, root redirect
 │   ├── routes/
-│   │   ├── extraction.py         # POST /api/v1/extract endpoint
-│   │   └── health.py             # GET /health endpoint
+│   │   ├── extraction.py         # POST /api/v1/extract
+│   │   └── health.py             # GET /health
 │   ├── services/
 │   │   ├── extraction_service.py # Pipeline orchestrator
-│   │   ├── ner_service.py        # Singleton NER model wrapper (HF/spaCy/rules)
-│   │   ├── text_cleaner.py       # OCR noise removal & text normalisation
-│   │   └── postprocessor.py      # Validation, normalisation, classification
+│   │   ├── ner_service.py        # 3-tier NER (BERT → spaCy → rules)
+│   │   ├── text_cleaner.py       # OCR noise removal
+│   │   └── postprocessor.py      # Validation + normalisation
 │   ├── schemas/
 │   │   └── extraction.py         # Pydantic request/response models
-│   ├── models/                   # (Reserved) Custom PyTorch/Pydantic models
 │   └── utils/
-│       ├── logger.py             # Structured logging (text/JSON)
-│       └── pdf_utils.py          # Smart PDF text extraction with OCR fallback
+│       ├── logger.py             # Structured logging
+│       └── pdf_utils.py          # Smart PDF extraction with OCR fallback
 │
 ├── ocr/
-│   └── ocr_pipeline.py           # Tesseract OCR pipeline (pdf2image + preprocessing)
+│   └── ocr_pipeline.py           # Tesseract OCR + OpenCV preprocessing
 │
 ├── training/
-│   ├── train.py                  # Fine-tune BERT NER on Doccano annotations
-│   └── evaluate.py               # Evaluate model on held-out test set
+│   ├── train.py                  # Fine-tune BERT with GPU support
+│   └── evaluate.py               # Evaluate on held-out test set
 │
 ├── config/
-│   ├── config.yaml               # Non-secret configuration
-│   └── settings.py               # Pydantic-settings (env var loading)
+│   ├── config.yaml               # Non-secret settings
+│   └── settings.py               # Pydantic-settings env var loading
 │
 ├── data/
-│   ├── raw/                      # Input PDFs (not committed to git)
-│   ├── processed/                # Cleaned text outputs
+│   ├── raw/                      # Input PDFs (gitignored)
+│   ├── processed/                # Cleaned text (gitignored)
 │   └── annotations/
-│       └── sample_annotations.jsonl   # Doccano JSONL annotation format
-│
-├── notebooks/                    # Jupyter notebooks (EDA only, not production code)
+│       └── sample_annotations.jsonl  # Sample Doccano JSONL format
 │
 ├── tests/
-│   ├── test_pipeline.py          # Unit tests: TextCleaner, PostProcessor
-│   └── test_api.py               # Integration tests: FastAPI TestClient
+│   ├── test_pipeline.py          # Unit tests for TextCleaner, PostProcessor
+│   └── test_api.py               # FastAPI integration tests
 │
-├── models/                       # Fine-tuned model artifacts (gitignored)
-├── Dockerfile                    # Multi-stage production Docker image
+├── models/                       # Trained model artifacts (gitignored)
+├── cuad_to_jsonl.py              # Convert CUAD dataset to NER training format
+├── generate_contracts.py         # Generate synthetic training contracts
+├── split_data.py                 # Split annotations into train/val/test
+├── annotate.py                   # CLI annotation tool (no Doccano needed)
+├── run.py                        # Simplified startup script
+├── Dockerfile                    # Multi-stage production image
 ├── docker-compose.yml            # API + MLflow services
-├── requirements.txt              # Pinned dependencies
-├── pytest.ini                    # Test configuration
+├── pyproject.toml                # Poetry dependency management
 ├── .env.example                  # Environment variable template
-├── .gitignore
 └── README.md
 ```
-
----
-
-## 🛠️ Tech Stack
-
-| Component | Technology | Purpose |
-|---|---|---|
-| API Framework | FastAPI 0.111 | REST endpoints, async, auto-docs |
-| NER (Primary) | HuggingFace Transformers (BERT) | Fine-tuned named entity recognition |
-| NER (Fallback 1) | spaCy en_core_web_trf | Pre-trained English NER |
-| NER (Fallback 2) | Regex rule engine | Zero-dependency fallback |
-| PDF Extraction | pdfplumber | Digital PDF text extraction |
-| OCR | Tesseract + pdf2image | Scanned PDF text recognition |
-| Image Processing | OpenCV + Pillow | OCR preprocessing (denoise, binarise) |
-| Experiment Tracking | MLflow | Training runs, metrics, model registry |
-| Containerisation | Docker + Compose | Reproducible deployment |
-| Validation | Pydantic v2 | Type-safe request/response schemas |
-| Testing | pytest + httpx | Unit + integration tests |
-| Logging | python-json-logger | Structured JSON logs for log aggregators |
 
 ---
 
@@ -171,34 +179,37 @@ legal-contract-extractor/
 ```
 PDF Input
     │
-    ├─► [pdfplumber] ──► Enough text? ──YES──► Raw Text
-    │                          │
-    │                          NO
-    │                          │
-    └─► [pdf2image] ──► PIL Images ──► [OpenCV preprocess] ──► [Tesseract OCR] ──► Raw Text
-                                         (deskew, denoise,
-                                          binarise, threshold)
-                                                │
-                                                ▼
-                                        [TextCleaner]
-                                    (ligatures, line breaks,
-                                     OCR artefacts, unicode)
-                                                │
-                                                ▼
-                                        [NERService]
-                                    HuggingFace BERT NER
-                                    → chunked inference
-                                    → entity routing
-                                                │
-                                                ▼
-                                        [PostProcessor]
-                                    Dates  → ISO-8601 normalise
-                                    Money  → amount + currency parse
-                                    Parties→ name clean + role infer
-                                    Terms  → clause classify + notice
-                                                │
-                                                ▼
-                                        Structured JSON
+    ├─► pdfplumber ──► Text sufficient? ──YES──► Raw Text
+    │                         │
+    │                         NO
+    │                         ▼
+    │              pdf2image → PIL Image
+    │              OpenCV preprocessing
+    │              (deskew, denoise, binarise)
+    │              Tesseract OCR
+    │                         │
+    │                         └──────────────► Raw Text
+    │
+    ▼
+TextCleaner
+(ligatures, OCR artefacts, broken hyphens, unicode normalisation)
+    │
+    ▼
+NERService
+    ├── legal-bert-base-uncased (fine-tuned on 509 CUAD contracts)
+    ├── spaCy fallback (if model not loaded)
+    ├── Rule-based fallback (if spaCy not installed)
+    └── Rule-based supplement (always runs, fills BERT gaps)
+    │
+    ▼
+PostProcessor
+    ├── Dates    → ISO-8601 normalisation, label classification
+    ├── Parties  → name cleaning, role inference
+    ├── Money    → amount parsing, currency detection
+    └── Terms    → clause type classification, notice period extraction
+    │
+    ▼
+Structured JSON Response
 ```
 
 ---
@@ -206,24 +217,37 @@ PDF Input
 ## 📦 Extracted Entities
 
 ### Dates
-- Normalised to ISO-8601 (`YYYY-MM-DD`)
-- Labelled: `EFFECTIVE_DATE`, `EXPIRY_DATE`, `TERMINATION_DATE`, `SIGNING_DATE`, `CONTRACT_DATE`
+- Normalised to **ISO-8601** (`YYYY-MM-DD`)
+- Labels: `EFFECTIVE_DATE`, `EXPIRY_DATE`, `TERMINATION_DATE`, `SIGNING_DATE`, `CONTRACT_DATE`
+- Duration patterns (`"30-day"`) automatically filtered out
 
 ### Parties
 - Cleaned organisation/person names
-- Roles inferred from context: `VENDOR`, `CLIENT`, `EMPLOYER`, `EMPLOYEE`, `CONTRACTOR`, `LESSOR`, `LESSEE`
+- Roles inferred: `VENDOR`, `CLIENT`, `EMPLOYER`, `EMPLOYEE`, `CONTRACTOR`, `LESSOR`, `LESSEE`
+- Handles `"hereinafter referred to as"` pattern
 
 ### Monetary Values
-- Parsed to `amount` (float) + `currency` (ISO 4217)
-- Supports symbols ($, €, £, ₹) and codes (USD, EUR, GBP, INR…)
-- Handles multipliers (million, billion, thousand)
-- Context snippet attached
+- Parsed `amount` (float) + `currency` (ISO 4217)
+- Supports `$`, `€`, `£`, `₹` and codes `USD`, `EUR`, `GBP`, `INR`
+- Handles multipliers: million, billion, thousand
+- Context snippet attached for auditability
+- Noise filtering — clause numbers and bare integers excluded
 
 ### Termination Clauses
 - Full clause text preserved
-- Classified: `TERMINATION_FOR_CAUSE`, `TERMINATION_FOR_CONVENIENCE`, `TERMINATION_BY_MUTUAL_AGREEMENT`, `AUTOMATIC_TERMINATION`, `INSOLVENCY_TERMINATION`, `TERMINATION_GENERAL`
-- Notice period extracted (e.g., "30 days")
+- Classified: `TERMINATION_FOR_CAUSE`, `TERMINATION_FOR_CONVENIENCE`, `TERMINATION_BY_MUTUAL_AGREEMENT`, `AUTOMATIC_TERMINATION`, `INSOLVENCY_TERMINATION`
+- Notice period extracted (e.g., `"30 days"`)
 
+## 📸 Screenshots
+
+### API Documentation
+![Swagger UI](assets/swagger_ui.png)
+
+### Extract Endpoint
+![Extract Endpoint](assets/extract_endpoint.png)
+
+### Live API Response
+![API Response](assets/api_response.png)
 ---
 
 ## 💻 Setup — Local Development
@@ -231,36 +255,38 @@ PDF Input
 ### Prerequisites
 
 - Python 3.11+
-- Tesseract OCR: `brew install tesseract` (macOS) or `apt-get install tesseract-ocr` (Ubuntu)
-- Poppler: `brew install poppler` or `apt-get install poppler-utils`
+- Poetry: `pip install poetry`
+- Tesseract OCR:
+  - Windows: [UB Mannheim installer](https://github.com/UB-Mannheim/tesseract/wiki)
+  - macOS: `brew install tesseract`
+  - Ubuntu: `sudo apt-get install tesseract-ocr tesseract-ocr-eng`
+- Poppler:
+  - Windows: [oschwartz10612/poppler-windows](https://github.com/oschwartz10612/poppler-windows/releases)
+  - macOS: `brew install poppler`
+  - Ubuntu: `sudo apt-get install poppler-utils`
 
 ### Steps
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/your-org/legal-contract-extractor.git
+git clone https://github.com/your-username/legal-contract-extractor.git
 cd legal-contract-extractor
 
-# 2. Create and activate virtual environment
-python -m venv .venv
-source .venv/bin/activate         # Windows: .venv\Scripts\activate
+# 2. Install dependencies
+poetry install
 
-# 3. Install dependencies
-pip install -r requirements.txt
+# 3. Download spaCy model
+poetry run python -m spacy download en_core_web_lg
 
-# 4. Download spaCy fallback model
-python -m spacy download en_core_web_sm
-
-# 5. Configure environment
+# 4. Configure environment
 cp .env.example .env
-# Edit .env — set MODEL_PATH if you have a fine-tuned model
+# Edit .env — set TESSERACT_CMD path for Windows
 
-# 6. Run the API
-uvicorn app.main:app --reload --port 8000
-
-# 7. Open interactive docs
-open http://localhost:8000/docs
+# 5. Start the API
+poetry run python run.py
 ```
+
+The browser opens automatically at `http://127.0.0.1:8000/docs`.
 
 ---
 
@@ -270,21 +296,11 @@ open http://localhost:8000/docs
 # 1. Configure environment
 cp .env.example .env
 
-# 2. Build and start all services (API + MLflow)
+# 2. Build and start
 docker-compose up --build
 
-# API available at:  http://localhost:8000
-# MLflow UI at:      http://localhost:5000
-# API docs at:       http://localhost:8000/docs
-
-# Run in background
-docker-compose up -d
-
-# View logs
-docker-compose logs -f api
-
-# Stop all services
-docker-compose down
+# API:    http://localhost:8000/docs
+# MLflow: http://localhost:5000
 ```
 
 ---
@@ -292,8 +308,6 @@ docker-compose down
 ## 📡 API Reference
 
 ### `GET /health`
-
-Health check — confirms service is running.
 
 ```bash
 curl http://localhost:8000/health
@@ -303,9 +317,7 @@ curl http://localhost:8000/health
 {
   "status": "healthy",
   "service": "legal-contract-extractor",
-  "version": "1.0.0",
-  "python": "3.11.8",
-  "platform": "Linux"
+  "version": "1.0.0"
 }
 ```
 
@@ -313,17 +325,14 @@ curl http://localhost:8000/health
 
 ### `POST /api/v1/extract`
 
-Extract entities from a legal PDF.
-
-**Request**
+Upload a PDF and receive extracted entities.
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/extract \
-  -F "file=@/path/to/contract.pdf"
+  -F "file=@contract.pdf"
 ```
 
-**Python Example**
-
+**Python:**
 ```python
 import httpx
 
@@ -332,14 +341,13 @@ with open("contract.pdf", "rb") as f:
         "http://localhost:8000/api/v1/extract",
         files={"file": ("contract.pdf", f, "application/pdf")},
     )
-
 print(response.json())
 ```
 
-**Constraints**
+**Limits:**
 - Accepts: `application/pdf`
 - Max file size: 50 MB
-- Supports: digital PDFs and scanned PDFs (OCR applied automatically)
+- Digital and scanned PDFs supported
 
 ---
 
@@ -348,66 +356,66 @@ print(response.json())
 ```json
 {
   "success": true,
-  "document_id": "a3f9c12b-4e77-4a1a-bf3c-1234567890ab",
+  "document_id": "5198ed88-700b-48fa-b196-30e910360346",
   "metadata": {
     "filename": "service_agreement.pdf",
-    "file_size_bytes": 204800,
+    "file_size_bytes": 2076,
     "ocr_applied": false,
-    "pages_processed": 12,
-    "processing_time_ms": 1423.5,
-    "model_version": "spacy-en_core_web_sm",
-    "extracted_at": "2024-06-01T10:30:00Z"
+    "pages_processed": 1,
+    "processing_time_ms": 2209.08,
+    "model_version": "hf-final",
+    "extracted_at": "2026-04-08T10:28:16.628207"
   },
   "entities": {
     "dates": [
       {
-        "value": "2024-01-15",
-        "raw_text": "January 15, 2024",
-        "label": "EFFECTIVE_DATE",
-        "confidence": 0.92
+        "value": "2024-03-12",
+        "raw_text": "12 March 2024",
+        "label": "CONTRACT_DATE",
+        "confidence": 0.70
       },
       {
-        "value": "2026-01-14",
-        "raw_text": "January 14, 2026",
-        "label": "EXPIRY_DATE",
-        "confidence": 0.88
+        "value": "2024-04-01",
+        "raw_text": "01 April 2024",
+        "label": "CONTRACT_DATE",
+        "confidence": 0.75
+      },
+      {
+        "value": "2025-03-31",
+        "raw_text": "31 March 2025",
+        "label": "CONTRACT_DATE",
+        "confidence": 0.75
       }
     ],
     "parties": [
       {
-        "name": "Acme Corporation, Inc.",
-        "role": "VENDOR",
-        "raw_text": "Acme Corporation, Inc. (the \"Vendor\")",
-        "confidence": 0.91
+        "name": "Alpha Tech Solutions Pvt Ltd.",
+        "role": null,
+        "raw_text": "Alpha Tech Solutions Pvt Ltd",
+        "confidence": 0.87
       },
       {
-        "name": "Beta Enterprises LLC",
-        "role": "CLIENT",
-        "raw_text": "Beta Enterprises LLC (the \"Client\")",
-        "confidence": 0.89
+        "name": "Beta Innovations LLP.",
+        "role": null,
+        "raw_text": "Beta Innovations LLP",
+        "confidence": 0.79
       }
     ],
     "monetary_values": [
       {
-        "amount": 150000.0,
+        "amount": 25000.0,
         "currency": "USD",
-        "raw_text": "USD 150,000",
-        "context": "the total annual service fee shall be USD 150,000, payable quarterly",
-        "confidence": 0.95
+        "raw_text": "$25,000",
+        "context": "The total contract value is $25,000 payable in two installments.",
+        "confidence": 0.80
       }
     ],
     "termination_clauses": [
       {
-        "text": "Either party may terminate this Agreement for convenience upon 30 days written notice to the other party.",
+        "text": "Either party may terminate this agreement with a 30-day written notice.",
         "clause_type": "TERMINATION_FOR_CONVENIENCE",
         "notice_period": "30 days",
-        "confidence": 0.87
-      },
-      {
-        "text": "Either party may terminate this Agreement for cause in the event of a material breach that remains uncured for 15 days.",
-        "clause_type": "TERMINATION_FOR_CAUSE",
-        "notice_period": "15 days",
-        "confidence": 0.85
+        "confidence": 0.80
       }
     ]
   }
@@ -416,107 +424,125 @@ print(response.json())
 
 ---
 
-## 🧠 Training a Custom NER Model
+## 🧠 Model Training
 
-### Step 1 — Annotate Data with Doccano
+### Dataset
 
-[Doccano](https://github.com/doccano/doccano) is the recommended open-source annotation tool.
+This project uses the **CUAD (Contract Understanding Atticus Dataset)** — 510 real commercial legal contracts with 13,000+ expert annotations, licensed under CC BY 4.0.
 
-```bash
-# Install and run Doccano locally
-pip install doccano
-doccano
-# Open http://localhost:8000 → create project → import contract text → annotate
-# Export as JSONL → save to data/annotations/train.jsonl + val.jsonl + test.jsonl
-```
+Download: [atticusprojectai.org/cuad](https://www.atticusprojectai.org/cuad)
 
-**Annotation Labels to Configure in Doccano:**
-`DATE`, `PARTY`, `MONEY`, `TERMINATION`
-
-### Step 2 — Fine-tune BERT
+### Training Pipeline
 
 ```bash
-python training/train.py \
+# Step 1 — Convert CUAD to NER format
+poetry run python cuad_to_jsonl.py --input CUADv1.json --output data/annotations
+
+# Step 2 — Generate synthetic short contracts (optional, improves short-doc performance)
+poetry run python generate_contracts.py
+
+# Step 3 — Split into train/val/test
+poetry run python split_data.py
+
+# Step 4 — Fine-tune BERT (GPU auto-detected)
+poetry run python training/train.py \
   --data_dir data/annotations \
   --output_dir models/legal-ner-bert-v1 \
-  --base_model dslim/bert-base-NER \
+  --base_model nlpaueb/legal-bert-base-uncased \
   --epochs 5 \
-  --batch_size 16 \
-  --mlflow_uri http://localhost:5000
-```
+  --batch_size 8
 
-### Step 3 — Evaluate
-
-```bash
-python training/evaluate.py \
+# Step 5 — Evaluate
+poetry run python training/evaluate.py \
   --model_path models/legal-ner-bert-v1/final \
-  --test_file data/annotations/test.jsonl \
-  --output_dir reports/
+  --test_file data/annotations/test.jsonl
 ```
 
-### Step 4 — Wire Up the Fine-tuned Model
+### Point API to trained model
+
+```env
+MODEL_PATH=models/legal-ner-bert-v1/final
+```
+
+### Annotation Tool (no Doccano needed)
 
 ```bash
-# In .env
-MODEL_PATH=./models/legal-ner-bert-v1/final
+poetry run python annotate.py
 ```
 
-The API will automatically load the fine-tuned model on next startup.
+Interactive CLI — load a PDF, type entity text, press 1/2/3/4 to label. Saves directly to `data/annotations/train.jsonl`.
 
 ---
 
 ## 🧪 Running Tests
 
 ```bash
-# Run all tests
-pytest
+# All tests
+poetry run pytest
 
-# Run with verbose output
-pytest -v
+# Unit tests only
+poetry run pytest tests/test_pipeline.py -v
 
-# Run only pipeline unit tests
-pytest tests/test_pipeline.py -v
+# API integration tests
+poetry run pytest tests/test_api.py -v
 
-# Run only API integration tests
-pytest tests/test_api.py -v
-
-# Run with coverage report
-pip install pytest-cov
-pytest --cov=app --cov-report=html
-open htmlcov/index.html
+# With coverage
+poetry run pytest --cov=app --cov-report=html
 ```
 
 ---
 
 ## 📊 MLflow Experiment Tracking
 
-When `MLFLOW_TRACKING_URI` is set, training runs are automatically logged:
-
-- Hyperparameters (learning rate, batch size, epochs)
-- Metrics per epoch (precision, recall, F1, accuracy)
-- Best model checkpoint artifact
-- Training loss curves
-
-Access the MLflow UI:
-
+Start MLflow UI:
+```bash
+poetry run mlflow ui --port 5000
 ```
-http://localhost:5000
+
+Open `http://localhost:5000` to view:
+- Training runs and hyperparameters
+- Precision, Recall, F1 per epoch
+- Model artifacts
+- Run comparisons
+
+When using Docker, MLflow is included in `docker-compose.yml` and runs at `http://localhost:5000` automatically.
+
+---
+
+## ⚙️ Environment Variables
+
+Copy `.env.example` to `.env` and configure:
+
+```env
+APP_ENV=development
+LOG_LEVEL=INFO
+LOG_FORMAT=text
+
+# NER Model — leave empty to use spaCy fallback
+MODEL_PATH=models/legal-ner-bert-v1/final
+
+# spaCy fallback model
+SPACY_MODEL=en_core_web_lg
+
+# Tesseract — required for scanned PDFs
+TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe
+
+# MLflow (optional)
+MLFLOW_TRACKING_URI=http://localhost:5000
 ```
 
 ---
 
 ## 🗺️ Roadmap
 
-- [ ] Async NER inference with background tasks for large batches
-- [ ] Clause-level confidence calibration
-- [ ] Support for DOCX input format
-- [ ] Multi-language contracts (multilingual BERT)
-- [ ] Redis-based result caching for repeated documents
-- [ ] Webhook callbacks for async processing
-- [ ] Fine-grained role detection using dependency parsing
-- [ ] Kubernetes Helm chart for production deployment
-- [ ] Prometheus metrics endpoint (`/metrics`)
-- [ ] Admin dashboard (Streamlit or Next.js)
+- [ ] Fine-tune on additional annotated short contracts
+- [ ] Role detection using dependency parsing
+- [ ] Multi-language contract support
+- [ ] Async batch processing for large document sets
+- [ ] Redis caching for repeated documents
+- [ ] Prometheus metrics endpoint
+- [ ] Kubernetes Helm chart
+- [ ] Frontend dashboard
 
 ---
 
@@ -529,9 +555,15 @@ MIT License — see [LICENSE](LICENSE) for details.
 ## 🤝 Contributing
 
 1. Fork the repository
-2. Create your feature branch: `git checkout -b feature/add-clause-classifier`
-3. Commit your changes: `git commit -m 'feat: add clause type classifier'`
-4. Push to the branch: `git push origin feature/add-clause-classifier`
+2. Create your feature branch: `git checkout -b feature/my-feature`
+3. Commit: `git commit -m 'feat: add my feature'`
+4. Push: `git push origin feature/my-feature`
 5. Open a Pull Request
 
-Please ensure all tests pass before submitting a PR.
+---
+
+## 🙏 Acknowledgements
+
+- [CUAD Dataset](https://www.atticusprojectai.org/cuad) — The Atticus Project (CC BY 4.0)
+- [nlpaueb/legal-bert-base-uncased](https://huggingface.co/nlpaueb/legal-bert-base-uncased) — NLP Group, Athens University
+- [dslim/bert-base-NER](https://huggingface.co/dslim/bert-base-NER) — Dan Abramson
